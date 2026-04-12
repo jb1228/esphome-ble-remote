@@ -1,4 +1,8 @@
 #include <map>
+#include <string>
+#include <vector>
+
+#include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/components/ble_client/ble_client.h"
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
@@ -15,6 +19,13 @@ namespace esphome {
 namespace ble_client_hid {
 
 namespace espbt=esphome::esp32_ble_tracker;
+
+class BLEClientHID;
+
+class HIDEventTrigger : public Trigger<std::string, std::string, int32_t> {
+ public:
+  explicit HIDEventTrigger(BLEClientHID *parent);
+};
 
 enum class HIDState {
   // Initial state
@@ -81,9 +92,16 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   void register_last_event_value_sensor(sensor::Sensor *last_event_value_sensor);
   void register_battery_sensor(sensor::Sensor * battery_sensor);
   void set_homeassistant_event_enabled(bool homeassistant_event_enabled);
+  void add_override(const std::string &code, const std::string &name) { this->overrides_[code] = name; }
+  void add_on_event_callback(std::function<void(const std::string &, const std::string &, int32_t)> &&callback) {
+    this->event_callback_.add(std::move(callback));
+  }
   void configure_hid_client();
   
  protected:
+  std::string format_usage_code_(const HIDUsage &usage) const;
+  std::string lookup_usage_name_(const HIDUsage &usage) const;
+  std::string resolve_usage_name_(const std::string &event_code, const HIDUsage &usage) const;
   void send_input_report_event(esp_ble_gattc_cb_param_t *p_data);
   uint8_t *parse_characteristic_data(ble_client::BLEService *service, uint16_t uuid);
   HIDReportMap* hid_report_map;
@@ -91,10 +109,12 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   std::vector<uint16_t> handles_registered_for_notify;
   std::map<uint16_t, GATTReadData *> handles_to_read;
   std::map<uint16_t, uint8_t> handle_report_id;
+  std::map<std::string, std::string> overrides_;
   text_sensor::TextSensor *last_event_usage_text_sensor = nullptr;
   text_sensor::TextSensor *last_event_code_text_sensor = nullptr;
   sensor::Sensor *last_event_value_sensor = nullptr;
   sensor::Sensor *battery_sensor = nullptr;
+  CallbackManager<void(const std::string &, const std::string &, int32_t)> event_callback_;
   bool homeassistant_event_enabled_ = true;
   HIDState hid_state = HIDState::INIT;
   uint16_t battery_handle;

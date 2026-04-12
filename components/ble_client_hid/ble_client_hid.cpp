@@ -13,6 +13,11 @@ static const std::string EMPTY = "";
 
 static TickType_t last_run = 0;
 
+HIDEventTrigger::HIDEventTrigger(BLEClientHID *parent) {
+  parent->add_on_event_callback(
+  [this](const std::string &code, const std::string &name, int32_t value) { this->trigger(code, name, value); });
+}
+
 void BLEClientHID::loop() {
   switch (this->hid_state) {
     case HIDState::BLE_CONNECTED:
@@ -236,6 +241,33 @@ void BLEClientHID::gattc_event_handler(esp_gattc_cb_event_t event,
   }
 }
 
+std::string BLEClientHID::format_usage_code_(const HIDUsage &usage) const {
+  return std::to_string(usage.page) + "_" + std::to_string(usage.usage);
+}
+
+std::string BLEClientHID::lookup_usage_name_(const HIDUsage &usage) const {
+  auto page_it = USAGE_PAGES.find(usage.page);
+  if (page_it == USAGE_PAGES.end()) {
+    return this->format_usage_code_(usage);
+  }
+
+  auto usage_it = page_it->second.usages_.find(usage.usage);
+  if (usage_it == page_it->second.usages_.end()) {
+    return this->format_usage_code_(usage);
+  }
+
+  return usage_it->second;
+}
+
+std::string BLEClientHID::resolve_usage_name_(const std::string &event_code, const HIDUsage &usage) const {
+  auto override_it = this->overrides_.find(event_code);
+  if (override_it != this->overrides_.end()) {
+    return override_it->second;
+  }
+
+  return this->lookup_usage_name_(usage);
+}
+
 void BLEClientHID::send_input_report_event(esp_ble_gattc_cb_param_t *p_data) {
   ESP_LOGD(TAG, "Received HID input report from handle %d",
            p_data->notify.handle);
@@ -248,36 +280,31 @@ void BLEClientHID::send_input_report_event(esp_ble_gattc_cb_param_t *p_data) {
     delete[] data;
     return;
   }
-  for (HIDReportItemValue value : hid_report_values) {
-    std::string usage;
-    if (USAGE_PAGES.count(value.usage.page) > 0 &&
-        USAGE_PAGES.at(value.usage.page).usages_.count(value.usage.usage) > 0) {
-      usage = USAGE_PAGES.at(value.usage.page).usages_.at(value.usage.usage);
-    } else {
-      usage = std::to_string(value.usage.page) + "_" +
-              std::to_string(value.usage.usage);
-    }
+  for (const HIDReportItemValue &value : hid_report_values) {
+    const std::string event_code = this->format_usage_code_(value.usage);
+    const std::string usage_name = this->resolve_usage_name_(event_code, value.usage);
     #if defined(USE_API) && defined(USE_API_HOMEASSISTANT_SERVICES) && defined(USE_BLE_CLIENT_HID_HOMEASSISTANT_EVENT)
     if (this->homeassistant_event_enabled_) {
       this->fire_homeassistant_event("esphome.hid_events",
-                                     {{"usage", usage}, {"value", std::to_string(value.value)}});
-      ESP_LOGD(TAG, "Sent HID event to Home Assistant: usage: %s, value: %d",
-               usage.c_str(), value.value);
+                                     {{"code", event_code},
+                                      {"name", usage_name},
+                                      {"value", std::to_string(value.value)}});
+      ESP_LOGD(TAG, "Sent HID event to Home Assistant: code: %s, name: %s, value: %d",
+               event_code.c_str(), usage_name.c_str(), value.value);
     }
     #endif
     if(this->last_event_usage_text_sensor != nullptr){
-      this->last_event_usage_text_sensor->publish_state(usage);
+      this->last_event_usage_text_sensor->publish_state(usage_name);
     }
     if(this->last_event_code_text_sensor != nullptr){
-      std::string event_code = std::to_string(value.usage.page) + "_" +
-                               std::to_string(value.usage.usage);
       this->last_event_code_text_sensor->publish_state(event_code);
     }
     if (this->last_event_value_sensor != nullptr) {
       this->last_event_value_sensor->publish_state(value.value);
     }
-    ESP_LOGI(TAG, "Received HID event: usage: %s, value: %d",
-             usage.c_str(), value.value);
+    this->event_callback_.call(event_code, usage_name, value.value);
+    ESP_LOGI(TAG, "Received HID event: code: %s, name: %s, value: %d",
+             event_code.c_str(), usage_name.c_str(), value.value);
   }
 
   delete[] data;

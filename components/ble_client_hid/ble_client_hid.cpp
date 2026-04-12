@@ -35,6 +35,18 @@ void BLEClientHID::dump_config() {
   ESP_LOGCONFIG(TAG, "BLE Client HID:");
   ESP_LOGCONFIG(TAG, "  MAC address        : %s",
                 this->parent()->address_str());
+  ESP_LOGCONFIG(TAG, "  Home Assistant Event: %s",
+                this->homeassistant_event_enabled_ ? "YES" : "NO");
+#if !defined(USE_API)
+  if (this->homeassistant_event_enabled_) {
+    ESP_LOGW(TAG, "Home Assistant event enabled, but the native API is not configured");
+  }
+#elif !defined(USE_API_HOMEASSISTANT_SERVICES)
+  if (this->homeassistant_event_enabled_) {
+    ESP_LOGW(TAG,
+             "Home Assistant event enabled, but 'api.homeassistant_services' is disabled");
+  }
+#endif
 }
 
 void BLEClientHID::gap_event_handler(esp_gap_ble_cb_event_t event,
@@ -245,9 +257,13 @@ void BLEClientHID::send_input_report_event(esp_ble_gattc_cb_param_t *p_data) {
       usage = std::to_string(value.usage.page) + "_" +
               std::to_string(value.usage.usage);
     }
-    #ifdef USE_API
-    this->fire_homeassistant_event("esphome.hid_events", {{"usage", usage}, {"value", std::to_string(value.value)}});
-    ESP_LOGD(TAG, "Send HID event to HomeAssistant: usage: %s, value: %d", usage.c_str(), value.value);
+    #if defined(USE_API) && defined(USE_API_HOMEASSISTANT_SERVICES) && defined(USE_BLE_CLIENT_HID_HOMEASSISTANT_EVENT)
+    if (this->homeassistant_event_enabled_) {
+      this->fire_homeassistant_event("esphome.hid_events",
+                                     {{"usage", usage}, {"value", std::to_string(value.value)}});
+      ESP_LOGD(TAG, "Sent HID event to Home Assistant: usage: %s, value: %d",
+               usage.c_str(), value.value);
+    }
     #endif
     if(this->last_event_usage_text_sensor != nullptr){
       this->last_event_usage_text_sensor->publish_state(usage);
@@ -260,7 +276,7 @@ void BLEClientHID::send_input_report_event(esp_ble_gattc_cb_param_t *p_data) {
     if (this->last_event_value_sensor != nullptr) {
       this->last_event_value_sensor->publish_state(value.value);
     }
-    ESP_LOGI(TAG, "Send HID event to HomeAssistant: usage: %s, value: %d",
+    ESP_LOGI(TAG, "Received HID event: usage: %s, value: %d",
              usage.c_str(), value.value);
   }
 
@@ -274,6 +290,11 @@ void BLEClientHID::register_last_event_value_sensor(
 
 void BLEClientHID::register_battery_sensor(sensor::Sensor *battery_sensor) {
   this->battery_sensor = battery_sensor;
+}
+
+void BLEClientHID::set_homeassistant_event_enabled(
+    bool homeassistant_event_enabled) {
+  this->homeassistant_event_enabled_ = homeassistant_event_enabled;
 }
 
 void BLEClientHID::register_last_event_usage_text_sensor(

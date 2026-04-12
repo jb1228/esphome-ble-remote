@@ -36,12 +36,14 @@ ble_client:
 ble_client_hid:
   - id: ble_client_hid_1
     ble_client_id: ble_client_1
+    homeassistant_event: false
 ```
 #### Configuration variables:
 - **id**(**Required**, ID): The ID to use for code generation, and for regerence by dependant components
 - **ble_client_id**(**Required**, ID): The ID of the `ble_client` component associated with this component can be omitted if only one `ble_client` is registered
+- **homeassistant_event**(**Optional**, boolean): Whether to fire the `esphome.hid_events` Home Assistant event. Defaults to `true`. Set this to `false` to skip the native API event overhead.
 #### Events:
-The component sends an event through the HomeAssistant Native API to HomeAssistant, when an hid event happens.
+When `homeassistant_event` is enabled, the component sends an event through the Home Assistant native API when an HID event happens.
 The event is named `esphome.hid_events` and contains the usage as a string and the value.
 Example:
 ```yaml
@@ -63,6 +65,7 @@ ble_client:
 ble_client_hid:
   - id: ble_client_hid_1
     ble_client_id: ble_client_1
+    homeassistant_event: false
 
 sensor:
   - platform: ble_client_hid

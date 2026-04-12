@@ -4,7 +4,7 @@
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
-#ifdef USE_API
+#if defined(USE_API) && defined(USE_BLE_CLIENT_HID_HOMEASSISTANT_EVENT)
 #include "esphome/components/api/custom_api_device.h"
 #endif
 #include "hid_parser.h"
@@ -60,7 +60,7 @@ class GATTReadData {
     uint16_t handle_;
 };
 
-#ifdef USE_API
+#if defined(USE_API) && defined(USE_BLE_CLIENT_HID_HOMEASSISTANT_EVENT)
 class BLEClientHID : public Component, public api::CustomAPIDevice, public ble_client::BLEClientNode {
 #else
 class BLEClientHID : public Component, public ble_client::BLEClientNode {
@@ -80,6 +80,7 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   void register_last_event_code_text_sensor(text_sensor::TextSensor *last_event_code_text_sensor);
   void register_last_event_value_sensor(sensor::Sensor *last_event_value_sensor);
   void register_battery_sensor(sensor::Sensor * battery_sensor);
+  void set_homeassistant_event_enabled(bool homeassistant_event_enabled);
   void configure_hid_client();
   
  protected:
@@ -94,6 +95,7 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   text_sensor::TextSensor *last_event_code_text_sensor = nullptr;
   sensor::Sensor *last_event_value_sensor = nullptr;
   sensor::Sensor *battery_sensor = nullptr;
+  bool homeassistant_event_enabled_ = true;
   HIDState hid_state = HIDState::INIT;
   uint16_t battery_handle;
   uint16_t vendor_id;

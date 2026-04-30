@@ -100,6 +100,16 @@ void BLEClientHID::read_client_characteristics() {
             ESP_GATT_UUID_SERIAL_NUMBER_STR);
     this->schedule_read_char(serial_number_char);
   }
+  if (this->battery_sensor != nullptr && battery_service != nullptr) {
+    BLECharacteristic *battery_level_char =
+        battery_service->get_characteristic(ESP_GATT_UUID_BATTERY_LEVEL);
+    if (battery_level_char != nullptr) {
+      this->battery_handle = battery_level_char->handle;
+      if ((battery_level_char->properties & ESP_GATT_CHAR_PROP_BIT_READ) != 0) {
+        this->schedule_read_char(battery_level_char);
+      }
+    }
+  }
   if (hid_service != nullptr) {
     BLECharacteristic *hid_report_map_char =
         hid_service->get_characteristic(ESP_GATT_UUID_HID_REPORT_MAP);
@@ -208,6 +218,9 @@ void BLEClientHID::gattc_event_handler(esp_gattc_cb_event_t event,
                  param->read.status);
         break;
       }
+      if (param->read.handle == this->battery_handle) {
+        this->publish_battery_level_(param->read.value, param->read.value_len);
+      }
       GATTReadData *data = new GATTReadData(
           param->read.handle, param->read.value, param->read.value_len);
       this->on_gatt_read_finished(data);
@@ -216,11 +229,8 @@ void BLEClientHID::gattc_event_handler(esp_gattc_cb_event_t event,
     case ESP_GATTC_NOTIFY_EVT: {
       if (param->notify.conn_id != this->parent()->get_conn_id()) break;
       if (p_data->notify.handle == this->battery_handle) {
-        uint8_t battery_level = p_data->notify.value[0];
-        if (this->battery_sensor == nullptr) {
-          break;
-        }
-        this->battery_sensor->publish_state(battery_level);
+        this->publish_battery_level_(p_data->notify.value,
+                                     p_data->notify.value_len);
       } else {
         // has to be hid report
         this->send_input_report_event(p_data);
@@ -266,6 +276,18 @@ std::string BLEClientHID::resolve_usage_name_(const std::string &event_code, con
   }
 
   return this->lookup_usage_name_(usage);
+}
+
+void BLEClientHID::publish_battery_level_(const uint8_t *value,
+                                          uint16_t value_len) {
+  if (this->battery_sensor == nullptr) {
+    return;
+  }
+  if (value == nullptr || value_len == 0) {
+    ESP_LOGW(TAG, "Ignoring empty battery update");
+    return;
+  }
+  this->battery_sensor->publish_state(value[0]);
 }
 
 void BLEClientHID::send_input_report_event(esp_ble_gattc_cb_param_t *p_data) {
@@ -391,22 +413,22 @@ void BLEClientHID::configure_hid_client() {
       this->device_name = "Generic";
     }
   }
-  if (battery_service != nullptr) {
+  if (this->battery_sensor != nullptr && battery_service != nullptr) {
     BLECharacteristic *battery_level_char =
         battery_service->get_characteristic(ESP_GATT_UUID_BATTERY_LEVEL);
-    if (battery_level_char != nullptr &&
-        ((battery_level_char->properties & ESP_GATT_CHAR_PROP_BIT_NOTIFY) !=
-         0)) {
+    if (battery_level_char != nullptr) {
       this->battery_handle = battery_level_char->handle;
-      auto status = esp_ble_gattc_register_for_notify(
-          this->parent()->get_gattc_if(), this->parent()->get_remote_bda(),
-          battery_level_char->handle);
-      
-      if (status != ESP_OK) {
-        ESP_LOGW(TAG, "Register for notify failed for handle %d with status=%d",
-                 battery_level_char->handle, status);
-      } else {
-        this->handles_waiting_for_notify_registration++;
+      if ((battery_level_char->properties & ESP_GATT_CHAR_PROP_BIT_NOTIFY) != 0) {
+        auto status = esp_ble_gattc_register_for_notify(
+            this->parent()->get_gattc_if(), this->parent()->get_remote_bda(),
+            battery_level_char->handle);
+
+        if (status != ESP_OK) {
+          ESP_LOGW(TAG, "Register for notify failed for handle %d with status=%d",
+                   battery_level_char->handle, status);
+        } else {
+          this->handles_waiting_for_notify_registration++;
+        }
       }
     }
   }

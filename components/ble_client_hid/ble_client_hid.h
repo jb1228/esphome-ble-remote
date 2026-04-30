@@ -102,6 +102,7 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   std::string format_usage_code_(const HIDUsage &usage) const;
   std::string lookup_usage_name_(const HIDUsage &usage) const;
   std::string resolve_usage_name_(const std::string &event_code, const HIDUsage &usage) const;
+  void publish_battery_level_(const uint8_t *value, uint16_t value_len);
   void send_input_report_event(esp_ble_gattc_cb_param_t *p_data);
   uint8_t *parse_characteristic_data(ble_client::BLEService *service, uint16_t uuid);
   HIDReportMap* hid_report_map;
@@ -117,7 +118,7 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   CallbackManager<void(const std::string &, const std::string &, int32_t)> event_callback_;
   bool homeassistant_event_enabled_ = true;
   HIDState hid_state = HIDState::INIT;
-  uint16_t battery_handle;
+  uint16_t battery_handle = 0;
   uint16_t vendor_id;
   uint16_t product_id;
   uint16_t version;

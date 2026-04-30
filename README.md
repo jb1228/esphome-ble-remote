@@ -78,6 +78,7 @@ Without an override, the default name for `7_81` would be `Keyboard DownArrow`.
 
 ### Battery sensor:
 The `ble_client_hid` sensor lets you track the battery level of the BLE HID client.
+It reads the standard Battery Level characteristic on connect when the device exposes it as readable, and subscribes to standard Battery Service notifications when they are available.
 ```yaml
 esp32_ble_tracker:            
 

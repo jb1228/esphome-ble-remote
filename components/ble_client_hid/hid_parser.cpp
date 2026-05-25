@@ -5,6 +5,7 @@
 
 #include "hid_report_data.h"
 #include "hid_parser.h"
+#include "usages.h"
 
 namespace esphome
 {
@@ -12,6 +13,92 @@ namespace esphome
   {
 
     static const char *const TAG = "hid_parser";
+
+    const char *hid_report_type_to_string(uint8_t report_type)
+    {
+      switch (report_type)
+      {
+      case HID_REPORT_TYPE_INPUT:
+        return "input";
+      case HID_REPORT_TYPE_OUTPUT:
+        return "output";
+      case HID_REPORT_TYPE_FEATURE:
+        return "feature";
+      default:
+        return "other";
+      }
+    }
+
+    static const char *hid_collection_type_to_string(uint8_t collection_type)
+    {
+      switch (collection_type)
+      {
+      case 0x00:
+        return "Physical";
+      case 0x01:
+        return "Application";
+      case 0x02:
+        return "Logical";
+      case 0x03:
+        return "Report";
+      case 0x04:
+        return "NamedArray";
+      case 0x05:
+        return "UsageSwitch";
+      case 0x06:
+        return "UsageModifier";
+      default:
+        return "Reserved";
+      }
+    }
+
+    static std::string format_usage_debug(const HIDUsage &usage)
+    {
+      auto page_it = USAGE_PAGES.find(usage.page);
+      if (page_it == USAGE_PAGES.end())
+      {
+        return std::to_string(usage.page) + "_" + std::to_string(usage.usage);
+      }
+
+      auto usage_it = page_it->second.usages_.find(usage.usage);
+      if (usage_it == page_it->second.usages_.end())
+      {
+        return std::string(page_it->second.name_) + ":" + std::to_string(usage.usage);
+      }
+
+      return std::string(page_it->second.name_) + ":" + usage_it->second;
+    }
+
+    static bool hid_item_value_is_signed(uint8_t report_item_info)
+    {
+      switch (report_item_info & (HID_ITEM_TYPE_MASK | HID_ITEM_TAG_MASK))
+      {
+      case HID_ITEM_TYPE_TAG_LOGICAL_MINIMUM:
+      case HID_ITEM_TYPE_TAG_LOGICAL_MAXIMUM:
+      case HID_ITEM_TYPE_TAG_PHYSICAL_MINIMUM:
+      case HID_ITEM_TYPE_TAG_PHYSICAL_MAXIMUM:
+        return true;
+      default:
+        return false;
+      }
+    }
+
+    static int32_t sign_extend_hid_value(uint32_t value, uint8_t bit_width)
+    {
+      if (bit_width == 0 || bit_width >= 32)
+      {
+        return static_cast<int32_t>(value);
+      }
+
+      const uint32_t sign_bit = 1UL << (bit_width - 1);
+      if ((value & sign_bit) == 0)
+      {
+        return static_cast<int32_t>(value);
+      }
+
+      const uint32_t extend_mask = ~((1UL << bit_width) - 1UL);
+      return static_cast<int32_t>(value | extend_mask);
+    }
 
     // requires at least C++11
     const std::string vformat(const char *const zcFormat, ...)
@@ -70,36 +157,46 @@ namespace esphome
 
     int32_t HIDReportMap::parse_item(const uint8_t **p_report_map_data, uint16_t *report_map_size, uint8_t report_item_info)
     {
-      uint32_t report_item_data;
+      uint32_t report_item_data = 0;
+      uint8_t item_size_bits = 0;
 
       switch (report_item_info & HID_ITEM_SIZE_MASK)
       {
       case HID_ITEM_SIZE_32:
+        item_size_bits = 32;
         report_item_data =
             (((uint32_t)(*p_report_map_data)[3] << 24) |
              ((uint32_t)(*p_report_map_data)[2] << 16) |
              ((uint16_t)(*p_report_map_data)[1] << 8) | (*p_report_map_data)[0]);
         (*report_map_size) -= 4;
         (*p_report_map_data) += 4;
-        return report_item_data;
+        break;
 
       case HID_ITEM_SIZE_16:
+        item_size_bits = 16;
         report_item_data =
             (((uint16_t)(*p_report_map_data)[1] << 8) | ((*p_report_map_data)[0]));
         (*report_map_size) -= 2;
         (*p_report_map_data) += 2;
-        return report_item_data;
+        break;
 
       case HID_ITEM_SIZE_8:
+        item_size_bits = 8;
         report_item_data = (*p_report_map_data)[0];
         (*report_map_size) -= 1;
         (*p_report_map_data) += 1;
-        return report_item_data;
+        break;
 
       default:
-        report_item_data = 0;
-        return report_item_data;
+        return 0;
       }
+
+      if (hid_item_value_is_signed(report_item_info))
+      {
+        return sign_extend_hid_value(report_item_data, item_size_bits);
+      }
+
+      return static_cast<int32_t>(report_item_data);
     }
 
     static const HIDUsage parse_usage(uint8_t item_info, uint32_t data, uint16_t usage_page)
@@ -126,7 +223,7 @@ namespace esphome
     const HIDUsage HIDUsageList::get_usage(uint16_t index) const
     {
       ESP_LOGD(TAG, "get usage for index %d with list size %d", index, this->usages.size());
-      if (index > this->usages.size())
+      if (index >= this->usages.size())
       {
         ESP_LOGW(TAG, "Usage index out of range");
         return HIDUsage(index,0);;
@@ -141,7 +238,8 @@ namespace esphome
       std::stack<HIDStateTable> parser_states;
       HIDUsageRangeLimits usage_range = {};
       std::vector<HIDUsage> usages;
-      std::map<uint8_t, HIDInputReport *> input_reports;
+      std::map<uint16_t, HIDInputReport *> reports;
+      std::vector<std::pair<HIDUsage, uint8_t>> collection_stack;
 
       while (report_map_size)
       {
@@ -222,11 +320,8 @@ namespace esphome
 
         case HID_ITEM_TYPE_TAG_REPORT_ID:
         {
-          if (input_reports.count(report_item_data) == 0)
-          {
-            input_reports.emplace(report_item_data, new HIDInputReport(report_item_data));
-          }
           state_table.report_id = report_item_data;
+          ESP_LOGV(TAG, "Active report ID changed to %u", state_table.report_id);
           break;
         }
 
@@ -249,35 +344,68 @@ namespace esphome
         }
 
         case HID_ITEM_TYPE_TAG_COLLECTION:
-          // Ignore for now
+        {
+          HIDUsage collection_usage = usages.empty() ? HIDUsage(0, state_table.usage_page) : usages.back();
+          collection_stack.emplace_back(collection_usage, static_cast<uint8_t>(report_item_data));
+          std::string indent(collection_stack.size() * 2, ' ');
+          ESP_LOGV(TAG, "%sCollection start: type=%s usage=%s", indent.c_str(),
+                   hid_collection_type_to_string(static_cast<uint8_t>(report_item_data)),
+                   format_usage_debug(collection_usage).c_str());
           break;
+        }
 
         case HID_ITEM_TYPE_TAG_END_COLLECTION:
-          // Ignore for now
+        {
+          if (collection_stack.empty())
+          {
+            ESP_LOGW(TAG, "End collection without a matching collection start");
+            break;
+          }
+          std::string indent(collection_stack.size() * 2, ' ');
+          ESP_LOGV(TAG, "%sCollection end: type=%s usage=%s", indent.c_str(),
+                   hid_collection_type_to_string(collection_stack.back().second),
+                   format_usage_debug(collection_stack.back().first).c_str());
+          collection_stack.pop_back();
           break;
+        }
 
         case HID_ITEM_TYPE_TAG_INPUT:
-
+        case HID_ITEM_TYPE_TAG_OUTPUT:
+        case HID_ITEM_TYPE_TAG_FEATURE:
         {
-          ESP_LOGD(TAG, "Found input main item");
-          uint16_t item_flags = report_item_data;
-
-          if (state_table.report_id == 0)
+          uint8_t report_type = HID_REPORT_TYPE_INPUT;
+          if ((report_item_info & (HID_ITEM_TYPE_MASK | HID_ITEM_TAG_MASK)) == HID_ITEM_TYPE_TAG_OUTPUT)
           {
-            if (input_reports.count(0) == 0)
-            {
-              ESP_LOGD(TAG, "Not using report ids");
-              input_reports.emplace(0, new HIDInputReport(0));
-            }
+            report_type = HID_REPORT_TYPE_OUTPUT;
+          }
+          else if ((report_item_info & (HID_ITEM_TYPE_MASK | HID_ITEM_TAG_MASK)) == HID_ITEM_TYPE_TAG_FEATURE)
+          {
+            report_type = HID_REPORT_TYPE_FEATURE;
           }
 
-          HIDInputReport *input_report = input_reports.at(state_table.report_id);
+          ESP_LOGD(TAG, "Found %s main item", hid_report_type_to_string(report_type));
+          uint16_t item_flags = report_item_data;
+
+          uint16_t report_key = HIDReportMap::make_report_key_(state_table.report_id, report_type);
+          if (reports.count(report_key) == 0)
+          {
+            reports.emplace(report_key, new HIDInputReport(state_table.report_id, report_type));
+          }
+
+          HIDInputReport *input_report = reports.at(report_key);
+          std::string indent(collection_stack.size() * 2, ' ');
+          ESP_LOGV(TAG,
+                   "%sRegistering %s report id=%u count=%u size=%u usage_page=%u collection_depth=%u",
+                   indent.c_str(), hid_report_type_to_string(report_type), state_table.report_id,
+                   state_table.report_count, state_table.report_size, state_table.usage_page,
+                   collection_stack.size());
           if (item_flags & HID_IOF_CONSTANT)
           {
-            ESP_LOGD(TAG, "Parsed input report item of type: constant");
+            ESP_LOGD(TAG, "Parsed %s report item of type: constant", hid_report_type_to_string(report_type));
             input_report->add_padding(state_table.report_size);
             break;
           }
+
           HIDUsageCollection *usage_collection;
           if (usages.size() > 0)
           {
@@ -291,21 +419,15 @@ namespace esphome
           if (item_flags & HID_IOF_VARIABLE)
           {
             input_report->push_back(new HIDInputReportVariable(usage_collection, state_table.report_count, state_table.report_id, state_table.logical_range, state_table.report_size, input_report->get_next_offset()));
-            ESP_LOGD(TAG, "Parsed input report item of type: variable, report size: %d, report count: %d, report id: %d", state_table.report_size, state_table.report_count, state_table.report_id);
+            ESP_LOGD(TAG, "Parsed %s report item of type: variable, report size: %d, report count: %d, report id: %d", hid_report_type_to_string(report_type), state_table.report_size, state_table.report_count, state_table.report_id);
           }
           else
           {
             input_report->push_back(new HIDInputReportArray(usage_collection, state_table.report_count, state_table.report_id, state_table.logical_range, state_table.report_size, input_report->get_next_offset()));
-            ESP_LOGD(TAG, "Parsed input report item of type: array, report size: %d, report count: %d, report id: %d", state_table.report_size, state_table.report_count, state_table.report_id);
+            ESP_LOGD(TAG, "Parsed %s report item of type: array, report size: %d, report count: %d, report id: %d", hid_report_type_to_string(report_type), state_table.report_size, state_table.report_count, state_table.report_id);
           }
           break;
         }
-        case HID_ITEM_TYPE_TAG_OUTPUT:
-          // Ignore for now
-          break;
-        case HID_ITEM_TYPE_TAG_FEATURE:
-          // Ignore for now
-          break;
 
         default:
           break;
@@ -317,9 +439,14 @@ namespace esphome
           usage_range.minimum = HIDUsage(0, 0);
         }
       }
-      HIDReportMap *report_map = new HIDReportMap(input_reports);
-      ESP_LOGD(TAG, "Parsed report map with %d input reports", input_reports.size());
+      HIDReportMap *report_map = new HIDReportMap(reports);
+      ESP_LOGD(TAG, "Parsed report map with %d reports", reports.size());
       return report_map;
+    }
+
+    uint16_t HIDReportMap::make_report_key_(uint8_t report_id, uint8_t report_type)
+    {
+      return (static_cast<uint16_t>(report_type) << 8) | report_id;
     }
 
     uint8_t HIDInputReport::get_next_offset()
@@ -340,20 +467,34 @@ namespace esphome
 
     std::vector<HIDReportItemValue> HIDReportMap::parse(uint8_t *hid_report_data)
     {
-      if (this->input_reports.empty())
+      return this->parse(HID_REPORT_TYPE_INPUT, hid_report_data);
+    }
+
+    std::vector<HIDReportItemValue> HIDReportMap::parse(uint8_t report_type, uint8_t *hid_report_data)
+    {
+      if (this->reports.empty())
       {
-        ESP_LOGW(TAG, "No input reports found");
+        ESP_LOGW(TAG, "No HID reports found");
         return std::vector<HIDReportItemValue>();
       }
-      if (this->input_reports.count(0) == 0)
+
+      uint16_t report_key = HIDReportMap::make_report_key_(0, report_type);
+      if (this->reports.count(report_key) == 0)
       {
-        ESP_LOGD(TAG, "Parsing HID report with report ID (%d)", hid_report_data[0]);
         uint8_t report_id = hid_report_data[0];
+        report_key = HIDReportMap::make_report_key_(report_id, report_type);
+        auto report_it = this->reports.find(report_key);
+        if (report_it == this->reports.end())
+        {
+          ESP_LOGW(TAG, "No %s report found for report ID %d", hid_report_type_to_string(report_type), report_id);
+          return std::vector<HIDReportItemValue>();
+        }
+        ESP_LOGD(TAG, "Parsing HID %s report with report ID (%d)", hid_report_type_to_string(report_type), report_id);
         hid_report_data++;
-        return this->input_reports.at(report_id)->parse(hid_report_data);
+        return report_it->second->parse(hid_report_data);
       }
-      ESP_LOGD(TAG, "Parsing HID report without report ID");
-      return this->input_reports.at(0)->parse(hid_report_data);
+      ESP_LOGD(TAG, "Parsing HID %s report without report ID", hid_report_type_to_string(report_type));
+      return this->reports.at(report_key)->parse(hid_report_data);
     }
 
     std::vector<HIDReportItemValue> HIDInputReport::parse(uint8_t *report_data)

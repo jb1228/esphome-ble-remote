@@ -1,9 +1,23 @@
 #pragma once
 
+#include <map>
+#include <string>
+#include <vector>
+
 namespace esphome
 {
   namespace ble_client_hid
   {
+
+    enum HIDReportType : uint8_t
+    {
+      HID_REPORT_TYPE_OTHER = 0,
+      HID_REPORT_TYPE_INPUT = 1,
+      HID_REPORT_TYPE_OUTPUT = 2,
+      HID_REPORT_TYPE_FEATURE = 3,
+    };
+
+    const char *hid_report_type_to_string(uint8_t report_type);
 
     struct HIDUsage
     {
@@ -126,7 +140,7 @@ namespace esphome
     class HIDInputReport
     {
     public:
-      HIDInputReport(uint8_t report_id) : report_id(report_id){};
+      HIDInputReport(uint8_t report_id, uint8_t report_type) : report_id(report_id), report_type(report_type){};
       ~HIDInputReport()
       {
         for (auto &item : items)
@@ -142,19 +156,20 @@ namespace esphome
     protected:
       std::vector<HIDInputReportItem *> items;
       const uint8_t report_id;
+      const uint8_t report_type;
       uint8_t report_size = 0;
     };
 
     class HIDReportMap
     {
     public:
-      HIDReportMap(std::map<uint8_t, HIDInputReport *> input_reports)
-          : input_reports(input_reports) {}
+      HIDReportMap(std::map<uint16_t, HIDInputReport *> reports)
+          : reports(reports) {}
       ~HIDReportMap()
       {
-        for (auto &input_report : input_reports)
+        for (auto &report : reports)
         {
-          delete input_report.second;
+          delete report.second;
         }
       };
       static HIDReportMap *parse_report_map_data(
@@ -162,9 +177,11 @@ namespace esphome
       static void esp_logd_report_map(const uint8_t *report_map_data, uint16_t report_map_size);
       static int32_t parse_item(const uint8_t **report_map_data, uint16_t *report_map_size, uint8_t report_item_info);
       std::vector<HIDReportItemValue> parse(uint8_t *hid_report_data);
+      std::vector<HIDReportItemValue> parse(uint8_t report_type, uint8_t *hid_report_data);
 
     protected:
-      const std::map<uint8_t, HIDInputReport *> input_reports;
+      static uint16_t make_report_key_(uint8_t report_id, uint8_t report_type);
+      const std::map<uint16_t, HIDInputReport *> reports;
     };
   } // namespace ble_client_hid
 } // namespace esphome

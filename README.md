@@ -49,6 +49,7 @@ ble_client_hid:
 - **id**(**Required**, ID): The ID to use for code generation, and for regerence by dependant components
 - **ble_client_id**(**Required**, ID): The ID of the `ble_client` component associated with this component can be omitted if only one `ble_client` is registered
 - **homeassistant_event**(**Optional**, boolean): Whether to fire the `esphome.hid_events` Home Assistant event. Defaults to `true`. Set this to `false` to skip the native API event overhead.
+- **debug_unmapped_characteristics**(**Optional**, boolean): When set to `true`, logs the full discovered GATT layout at `VERBOSE` level, reads unmapped readable characteristics once on connect, and subscribes to unmapped notify or indicate characteristics so vendor-specific traffic can be inspected. Defaults to `false`.
 - **overrides**(**Optional**, mapping): Rename individual HID codes before they are published to automations, text sensors, and Home Assistant events.
   Use the HID code as the key and the friendly name as the value.
   Example:
@@ -75,6 +76,33 @@ This example assumes the override above is configured for `7_81`.
 Without an override, the default name for `7_81` would be `Keyboard DownArrow`.
 
 `code` is the raw HID identifier in `{page}_{usage}` decimal format. `name` is the resolved display name after applying any configured overrides.
+
+### Debug logging:
+Set the logger level to `VERBOSE` when you want to inspect HID discovery and parsing in detail.
+Verbose logs now include:
+- collection and application information from the HID report map during initial parsing
+- HID report characteristic summaries with report ID and report type
+- raw HID report bytes for readable and notified reports
+- parsed values from input, output, and feature reports
+- optional full GATT service, characteristic, and descriptor discovery logging
+- optional raw reads and notifications from unmapped characteristics outside the normal HID event path
+
+Readable input, output, and feature reports are logged during the initial connection phase for debugging.
+Only input reports received through the normal event path are published to automations, text sensors, and Home Assistant events.
+When `debug_unmapped_characteristics` is enabled, the component also logs vendor-specific or otherwise unmapped characteristic traffic that may explain buttons such as microphone or voice-assistant keys.
+
+```yaml
+ble_client_hid:
+  - id: ble_client_hid_1
+    ble_client_id: ble_client_1
+    debug_unmapped_characteristics: true
+
+logger:
+  level: VERBOSE
+  initial_level: DEBUG
+  logs:
+    ble_client_hid: VERBOSE
+```
 
 ### Battery sensor:
 The `ble_client_hid` sensor lets you track the battery level of the BLE HID client.

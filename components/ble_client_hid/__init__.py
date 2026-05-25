@@ -14,6 +14,7 @@ CODE_OWNERS=["@fsievers22"]
 MULTI_CONF=3
 
 CONF_HOMEASSISTANT_EVENT = "homeassistant_event"
+CONF_DEBUG_UNMAPPED_CHARACTERISTICS = "debug_unmapped_characteristics"
 CONF_CODE = "code"
 CONF_ON_HID_EVENT = "on_hid_event"
 CONF_OVERRIDES = "overrides"
@@ -70,6 +71,7 @@ CONFIG_SCHEMA = (
         {
             cv.GenerateID(): cv.declare_id(BLEClientHID),
             cv.Optional(CONF_HOMEASSISTANT_EVENT, default=True): cv.boolean,
+            cv.Optional(CONF_DEBUG_UNMAPPED_CHARACTERISTICS, default=False): cv.boolean,
             cv.Optional(CONF_OVERRIDES, default={}): validate_overrides,
             cv.Optional(CONF_ON_HID_EVENT): automation.validate_automation(
                 {
@@ -111,6 +113,7 @@ async def to_code(config):
     if config[CONF_HOMEASSISTANT_EVENT]:
         cg.add_define("USE_BLE_CLIENT_HID_HOMEASSISTANT_EVENT")
     cg.add(var.set_homeassistant_event_enabled(config[CONF_HOMEASSISTANT_EVENT]))
+    cg.add(var.set_debug_unmapped_characteristics(config[CONF_DEBUG_UNMAPPED_CHARACTERISTICS]))
     for override_code, override_name in config[CONF_OVERRIDES].items():
         cg.add(var.add_override(override_code, override_name))
     await cg.register_component(var, config)

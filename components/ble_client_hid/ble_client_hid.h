@@ -63,7 +63,7 @@ enum class HIDState {
 
   CONN_PARAMS_UPDATING,
 
-  CONFIGURED,
+  HID_CONFIGURED,
   
 };
 

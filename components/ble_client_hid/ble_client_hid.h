@@ -106,7 +106,9 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
                            esp_ble_gattc_cb_param_t *param) override;
 
   void dump_config() override;
-  void schedule_read_char(ble_client::BLECharacteristic *characteristic);
+  void schedule_read_char(ble_client::BLECharacteristic *characteristic,
+                          uint16_t expected_uuid, const char *purpose,
+                          bool required = false);
   void on_gatt_read_finished(GATTReadData *data);
   void read_client_characteristics();
   float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }

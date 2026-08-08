@@ -216,7 +216,12 @@ namespace esphome
     {
       if (index > this->usage_max.usage - this->usage_min.usage)
       {
-        ESP_LOGW(TAG, "Usage index out of range");
+        ESP_LOGW(TAG,
+                 "Usage index %u out of range for page %u usage range [%u, %u]",
+                 static_cast<unsigned>(index),
+                 static_cast<unsigned>(this->usage_page),
+                 static_cast<unsigned>(this->usage_min.usage),
+                 static_cast<unsigned>(this->usage_max.usage));
         return HIDUsage(index,0);
       }
       return HIDUsage(this->usage_min.usage + index, this->usage_page);
@@ -227,7 +232,9 @@ namespace esphome
       ESP_LOGD(TAG, "get usage for index %d with list size %d", index, this->usages.size());
       if (index >= this->usages.size())
       {
-        ESP_LOGW(TAG, "Usage index out of range");
+        ESP_LOGW(TAG, "Usage index %u out of range for usage list size %u",
+                 static_cast<unsigned>(index),
+                 static_cast<unsigned>(this->usages.size()));
         return HIDUsage(index,0);;
       }
       return this->usages[index];
@@ -560,7 +567,17 @@ namespace esphome
         int32_t value = parse_input_report_item(report_data, this->report_offset + i * this->report_size, this->report_size, this->logical_range);
         if (value > this->logical_range.maximum || value < this->logical_range.minimum)
         {
-          ESP_LOGD(TAG, "Value out of range");
+          ESP_LOGD(TAG,
+                   "Report ID %u variable field %u (bit offset=%u, size=%u): value=%ld (0x%lX) outside logical range [%ld, %ld]",
+                   static_cast<unsigned>(this->report_id),
+                   static_cast<unsigned>(i),
+                   static_cast<unsigned>(this->report_offset +
+                                         i * this->report_size),
+                   static_cast<unsigned>(this->report_size),
+                   static_cast<long>(value),
+                   static_cast<unsigned long>(static_cast<uint32_t>(value)),
+                   static_cast<long>(this->logical_range.minimum),
+                   static_cast<long>(this->logical_range.maximum));
           continue;
         }
         if (this->last_values[i].raw_value == value)
@@ -582,7 +599,17 @@ namespace esphome
         int32_t value = parse_input_report_item(report_data, this->report_offset + i * this->report_size, this->report_size, this->logical_range);
         if (value > this->logical_range.maximum || value < this->logical_range.minimum)
         {
-          ESP_LOGD(TAG, "Value out of range");
+          ESP_LOGD(TAG,
+                   "Report ID %u array field %u (bit offset=%u, size=%u): value=%ld (0x%lX) outside logical range [%ld, %ld]; treating as null/no selection",
+                   static_cast<unsigned>(this->report_id),
+                   static_cast<unsigned>(i),
+                   static_cast<unsigned>(this->report_offset +
+                                         i * this->report_size),
+                   static_cast<unsigned>(this->report_size),
+                   static_cast<long>(value),
+                   static_cast<unsigned long>(static_cast<uint32_t>(value)),
+                   static_cast<long>(this->logical_range.minimum),
+                   static_cast<long>(this->logical_range.maximum));
           value = 0;
         }
         if(value == 0){

@@ -117,19 +117,23 @@ void BLEClientHID::read_client_characteristics() {
     BLECharacteristic *device_name_char =
         generic_access_service->get_characteristic(
             ESP_GATT_UUID_GAP_DEVICE_NAME);
-    this->schedule_read_char(device_name_char);
+    this->schedule_read_char(device_name_char, ESP_GATT_UUID_GAP_DEVICE_NAME,
+                             "device name");
   }
   if (device_info_service != nullptr) {
     BLECharacteristic *pnp_id_char =
         device_info_service->get_characteristic(ESP_GATT_UUID_PNP_ID);
-    this->schedule_read_char(pnp_id_char);
+    this->schedule_read_char(pnp_id_char, ESP_GATT_UUID_PNP_ID, "PnP ID");
     BLECharacteristic *manufacturer_char =
         device_info_service->get_characteristic(ESP_GATT_UUID_MANU_NAME);
-    this->schedule_read_char(manufacturer_char);
+    this->schedule_read_char(manufacturer_char, ESP_GATT_UUID_MANU_NAME,
+                             "manufacturer name");
     BLECharacteristic *serial_number_char =
         device_info_service->get_characteristic(
             ESP_GATT_UUID_SERIAL_NUMBER_STR);
-    this->schedule_read_char(serial_number_char);
+    this->schedule_read_char(serial_number_char,
+                             ESP_GATT_UUID_SERIAL_NUMBER_STR,
+                             "serial number");
   }
   if (this->battery_sensor != nullptr && battery_service != nullptr) {
     BLECharacteristic *battery_level_char =
@@ -137,14 +141,18 @@ void BLEClientHID::read_client_characteristics() {
     if (battery_level_char != nullptr) {
       this->battery_handle = battery_level_char->handle;
       if ((battery_level_char->properties & ESP_GATT_CHAR_PROP_BIT_READ) != 0) {
-        this->schedule_read_char(battery_level_char);
+        this->schedule_read_char(battery_level_char,
+                                 ESP_GATT_UUID_BATTERY_LEVEL,
+                                 "battery level");
       }
     }
   }
   if (hid_service != nullptr) {
     BLECharacteristic *hid_report_map_char =
         hid_service->get_characteristic(ESP_GATT_UUID_HID_REPORT_MAP);
-    this->schedule_read_char(hid_report_map_char);
+    this->schedule_read_char(hid_report_map_char,
+                             ESP_GATT_UUID_HID_REPORT_MAP,
+                             "HID Report Map", true);
     ESP_LOGD(TAG, "Found %d characteristics",
              hid_service->characteristics.size());
     for (auto *chr : hid_service->characteristics) {
@@ -153,7 +161,8 @@ void BLEClientHID::read_client_characteristics() {
       }
 
       if ((chr->properties & ESP_GATT_CHAR_PROP_BIT_READ) != 0) {
-        this->schedule_read_char(chr);
+        this->schedule_read_char(chr, ESP_GATT_UUID_HID_REPORT,
+                                 "HID report");
       }
 
       BLEDescriptor *rpt_ref_desc =
@@ -174,7 +183,8 @@ void BLEClientHID::read_client_characteristics() {
           continue;
         }
         this->track_debug_characteristic_(service, characteristic);
-        this->schedule_read_char(characteristic);
+        this->schedule_read_char(characteristic, 0,
+                                 "unmapped characteristic");
       }
     }
   }
@@ -637,9 +647,28 @@ void BLEClientHID::register_last_event_code_text_sensor(
 }
 
 void BLEClientHID::schedule_read_char(
-    ble_client::BLECharacteristic *characteristic) {
+    ble_client::BLECharacteristic *characteristic, uint16_t expected_uuid,
+    const char *purpose, bool required) {
   if (characteristic == nullptr) {
-    ESP_LOGW(TAG, "characteristic not found");
+    if (required && expected_uuid != 0) {
+      ESP_LOGW(TAG,
+               "[%s] Cannot queue required %s read: characteristic UUID "
+               "0x%04X not found",
+               this->parent()->address_str(), purpose,
+               static_cast<unsigned>(expected_uuid));
+    } else if (required) {
+      ESP_LOGW(TAG,
+               "[%s] Cannot queue required %s read: characteristic not found",
+               this->parent()->address_str(), purpose);
+    } else if (expected_uuid != 0) {
+      ESP_LOGD(TAG,
+               "[%s] Cannot queue %s read: characteristic UUID 0x%04X not found",
+               this->parent()->address_str(), purpose,
+               static_cast<unsigned>(expected_uuid));
+    } else {
+      ESP_LOGD(TAG, "[%s] Cannot queue %s read: characteristic not found",
+               this->parent()->address_str(), purpose);
+    }
     return;
   }
   if ((characteristic->properties & ESP_GATT_CHAR_PROP_BIT_READ) == 0) {
@@ -769,7 +798,10 @@ uint8_t *BLEClientHID::parse_characteristic_data(
   using namespace ble_client;
   BLECharacteristic *characteristic = service->get_characteristic(uuid);
   if (characteristic == nullptr) {
-    ESP_LOGD(TAG, "No characteristic with uuid %#X found on device", uuid);
+    ESP_LOGD(TAG,
+             "[%s] Characteristic UUID 0x%04X not found in service %s",
+             this->parent()->address_str(), static_cast<unsigned>(uuid),
+             this->format_uuid_(service->uuid).c_str());
     return nullptr;
   }
   GATTReadData *data = this->get_read_data_(characteristic->handle);
@@ -781,9 +813,10 @@ uint8_t *BLEClientHID::parse_characteristic_data(
     return data->value_;
   }
   ESP_LOGD(TAG,
-           "Characteristic with uuid %#X and handle %#X not stored in "
-           "handles_to_read",
-           uuid, characteristic->handle);
+           "[%s] No successful read data for characteristic UUID 0x%04X "
+           "handle=0x%04X",
+           this->parent()->address_str(), static_cast<unsigned>(uuid),
+           static_cast<unsigned>(characteristic->handle));
   return nullptr;
 }
 

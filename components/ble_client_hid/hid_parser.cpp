@@ -69,15 +69,16 @@ namespace esphome
       return std::string(page_it->second.name_) + ":" + usage_it->second;
     }
 
-    static bool hid_item_value_is_signed(uint8_t report_item_info)
+    static bool hid_item_value_is_signed(uint8_t report_item_info, const HIDStateTable &state_table)
     {
       switch (report_item_info & (HID_ITEM_TYPE_MASK | HID_ITEM_TAG_MASK))
       {
       case HID_ITEM_TYPE_TAG_LOGICAL_MINIMUM:
-      case HID_ITEM_TYPE_TAG_LOGICAL_MAXIMUM:
       case HID_ITEM_TYPE_TAG_PHYSICAL_MINIMUM:
       case HID_ITEM_TYPE_TAG_PHYSICAL_MAXIMUM:
         return true;
+      case HID_ITEM_TYPE_TAG_LOGICAL_MAXIMUM:
+        return state_table.logical_range.minimum < 0;
       default:
         return false;
       }
@@ -155,7 +156,8 @@ namespace esphome
       }
     }
 
-    int32_t HIDReportMap::parse_item(const uint8_t **p_report_map_data, uint16_t *report_map_size, uint8_t report_item_info)
+    int32_t HIDReportMap::parse_item(const uint8_t **p_report_map_data, uint16_t *report_map_size,
+                                     uint8_t report_item_info, bool signed_value)
     {
       uint32_t report_item_data = 0;
       uint8_t item_size_bits = 0;
@@ -191,7 +193,7 @@ namespace esphome
         return 0;
       }
 
-      if (hid_item_value_is_signed(report_item_info))
+      if (signed_value)
       {
         return sign_extend_hid_value(report_item_data, item_size_bits);
       }
@@ -248,7 +250,9 @@ namespace esphome
         report_map_data++;
         report_map_size--;
 
-        uint32_t report_item_data = HIDReportMap::parse_item(&report_map_data, &report_map_size, report_item_info);
+        bool signed_value = hid_item_value_is_signed(report_item_info, state_table);
+        uint32_t report_item_data = HIDReportMap::parse_item(
+            &report_map_data, &report_map_size, report_item_info, signed_value);
         switch (report_item_info & (HID_ITEM_TYPE_MASK | HID_ITEM_TAG_MASK))
         {
         case HID_ITEM_TYPE_TAG_PUSH:
@@ -273,7 +277,7 @@ namespace esphome
 
         case HID_ITEM_TYPE_TAG_USAGE_PAGE:
         {
-          ESP_LOGD(TAG, "Usage page: %X", report_item_data);
+          ESP_LOGD(TAG, "Usage page: %lX", report_item_data);
           state_table.usage_page = report_item_data;
           break;
         }

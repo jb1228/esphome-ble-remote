@@ -175,7 +175,8 @@ namespace esphome
       static HIDReportMap *parse_report_map_data(
           const uint8_t *report_map_data, uint16_t report_map_size);
       static void esp_logd_report_map(const uint8_t *report_map_data, uint16_t report_map_size);
-      static int32_t parse_item(const uint8_t **report_map_data, uint16_t *report_map_size, uint8_t report_item_info);
+      static int32_t parse_item(const uint8_t **report_map_data, uint16_t *report_map_size,
+                                uint8_t report_item_info, bool signed_value);
       std::vector<HIDReportItemValue> parse(uint8_t *hid_report_data);
       std::vector<HIDReportItemValue> parse(uint8_t report_type, uint8_t *hid_report_data);
 

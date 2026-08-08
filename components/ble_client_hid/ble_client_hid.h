@@ -27,6 +27,17 @@ struct HIDReportReference {
   uint8_t report_type = HID_REPORT_TYPE_INPUT;
 };
 
+enum class GATTReadType : uint8_t {
+  CHARACTERISTIC,
+  DESCRIPTOR,
+};
+
+struct GATTReadRequest {
+  uint16_t handle;
+  GATTReadType type;
+  uint8_t retries = 0;
+};
+
 struct DebugCharacteristicInfo {
   std::string service_uuid;
   std::string characteristic_uuid;
@@ -61,8 +72,6 @@ enum class HIDState {
 
   NOTIFICATIONS_REGISTERED,
 
-  CONN_PARAMS_UPDATING,
-
   HID_CONFIGURED,
   
 };
@@ -72,11 +81,13 @@ class GATTReadData {
     GATTReadData(uint16_t handle, uint8_t *value, uint16_t value_len){
       this->handle_ = handle;
       this->value_len_ = value_len;
-      this->value_ = new uint8_t[value_len];
-      memcpy(this->value_, value, sizeof(uint8_t) * value_len);
+      this->value_ = value_len == 0 ? nullptr : new uint8_t[value_len];
+      if (value_len > 0) {
+        memcpy(this->value_, value, sizeof(uint8_t) * value_len);
+      }
     }
     ~GATTReadData(){
-      delete value_;
+      delete[] value_;
     }
   public:
     uint8_t *value_;
@@ -97,7 +108,6 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   void dump_config() override;
   void schedule_read_char(ble_client::BLECharacteristic *characteristic);
   void on_gatt_read_finished(GATTReadData *data);
-  void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) override;
   void read_client_characteristics();
   float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
   void register_last_event_usage_text_sensor(text_sensor::TextSensor *last_event_usage_text_sensor);
@@ -110,7 +120,7 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   void add_on_event_callback(std::function<void(const std::string &, const std::string &, int32_t)> &&callback) {
     this->event_callback_.add(std::move(callback));
   }
-  void configure_hid_client();
+  bool configure_hid_client();
   
  protected:
   std::string format_usage_code_(const HIDUsage &usage) const;
@@ -124,6 +134,12 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
                                    const ble_client::BLECharacteristic *characteristic);
   void register_for_notify_(ble_client::BLECharacteristic *characteristic,
                             const char *purpose);
+  void schedule_read_descriptor_(ble_client::BLEDescriptor *descriptor);
+  void start_next_read_();
+  void handle_read_failure_(esp_gatt_status_t status);
+  bool is_transient_read_status_(esp_gatt_status_t status) const;
+  void reset_read_state_();
+  GATTReadData *get_read_data_(uint16_t handle) const;
   void log_debug_characteristic_value_(uint16_t handle, const uint8_t *value,
                                        uint16_t value_len,
                                        const char *source) const;
@@ -134,6 +150,7 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   HIDReportMap* hid_report_map = nullptr;
   std::vector<ble_client::BLECharacteristic *> characteristics;
   std::vector<uint16_t> handles_registered_for_notify;
+  std::vector<GATTReadRequest> read_queue_;
   std::map<uint16_t, GATTReadData *> handles_to_read;
   std::map<uint16_t, HIDReportReference> handle_report_reference_;
   std::map<uint16_t, DebugCharacteristicInfo> debug_characteristics_;
@@ -153,9 +170,10 @@ class BLEClientHID : public Component, public ble_client::BLEClientNode {
   std::string device_name;
   std::string manufacturer;
   std::string serial_number;
-  bool is_connected = false;
   uint8_t handles_waiting_for_notify_registration = 0;
-  esp_ble_conn_update_params_t preferred_conn_params = {0};
+  size_t read_queue_index_ = 0;
+  bool read_in_flight_ = false;
+  uint32_t read_retry_at_ = 0;
 };
 
 }  // namespace ble_client_hid
